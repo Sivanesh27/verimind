@@ -6,7 +6,7 @@
  *
  * Every stage is reported through `onStep` so the UI can render the reasoning live.
  */
-import { structured, LlmRefusalError, isLocal } from './llm.js';
+import { structured, LlmRefusalError, isSerial } from './llm.js';
 import { env } from '../config/env.js';
 import * as P from './prompts.js';
 import * as S from './schemas.js';
@@ -15,8 +15,8 @@ import { calculate, numbersMatch } from './tools/calculator.js';
 import { scoreConfidence, explainConfidence, clamp01 } from './confidence.js';
 import { decideRoute } from './router.js';
 
-// Extra independent attempts for self-consistency. A CPU-bound local model defaults to 1 (LLM_SAMPLES) to keep latency sane.
-const SAMPLE_COUNT = isLocal ? Math.max(1, env.local.samples) : 2;
+// Extra independent attempts for self-consistency. Serial providers (local CPU model, rate-limited free API) default to 1 (LLM_SAMPLES).
+const SAMPLE_COUNT = isSerial ? Math.max(1, env.local.samples) : 2;
 const MAX_LOOPS = 3;
 
 export async function runTrustAgent(query, { onStep = () => {}, context = null } = {}) {

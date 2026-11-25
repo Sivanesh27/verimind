@@ -12,6 +12,10 @@ async function main() {
   if (env.llmProvider === 'anthropic' && !env.anthropicApiKey) {
     console.warn('[boot] LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set — agent calls will fail');
   }
+  if (env.llmProvider === 'api' && !env.api.key) {
+    console.warn('[boot] LLM_PROVIDER=mistral but LLM_API_KEY is not set — agent calls will fail');
+  }
+  console.log(`[boot] LLM provider: ${env.llmProvider}${env.llmProvider === 'api' ? ` (${env.api.model} @ ${env.api.baseUrl})` : ''}`);
   await migrate();
   await failStaleEvalRuns();
   await promoteAdmins(env.adminEmails);

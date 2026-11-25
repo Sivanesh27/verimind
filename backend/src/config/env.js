@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+function normaliseProvider(v) {
+  const p = (v || 'local').toLowerCase();
+  return ['mistral', 'openai', 'api'].includes(p) ? 'api' : p;
+}
+
 function parseGpu(v) {
   if (!v || v === 'false' || v === 'cpu') return false;
   return v; // 'auto' | 'cuda' | 'vulkan' | 'metal'
@@ -30,8 +35,16 @@ export const env = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   adminEmails: list(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
 
-  // LLM: "local" runs the GGUF model in the project root; "anthropic" uses the Claude API.
-  llmProvider: (process.env.LLM_PROVIDER || 'local').toLowerCase(),
+  // LLM: "api" (Mistral or any OpenAI-compatible API), "local" (GGUF in project root), or "anthropic".
+  llmProvider: normaliseProvider(process.env.LLM_PROVIDER),
+  api: {
+    baseUrl: (process.env.LLM_API_BASE_URL || 'https://api.mistral.ai/v1').replace(/\/$/, ''),
+    key: process.env.LLM_API_KEY || process.env.MISTRAL_API_KEY,
+    model: process.env.LLM_API_MODEL || 'ministral-8b-latest',
+    // Free tiers allow about 1 request/second.
+    minIntervalMs: Number(process.env.LLM_API_MIN_INTERVAL_MS ?? 1100),
+    jsonMode: process.env.LLM_API_JSON_MODE || 'json_schema', // or "json_object"
+  },
   local: {
     modelPath: resolve(backendRoot, process.env.LLM_MODEL_PATH || '../LLM.gguf'),
     modelUrl: process.env.LLM_MODEL_URL || null,

@@ -3,14 +3,14 @@
  */
 import { DATASET } from './dataset.js';
 import { summarize } from './metrics.js';
-import { structured, isLocal } from '../agent/llm.js';
+import { structured, isSerial } from '../agent/llm.js';
 import { GRADER_SYSTEM } from '../agent/prompts.js';
 import { GradeResult } from '../agent/schemas.js';
 import { runBaselineAgent } from '../agent/baselineAgent.js';
 import { runTrustAgent } from '../agent/trustAgent.js';
 
-// The local model serialises calls anyway, so parallel scenarios would only interleave.
-const CONCURRENCY = isLocal ? 1 : 2;
+// Serial providers (local model, rate-limited API) process one call at a time; parallel scenarios would only interleave.
+const CONCURRENCY = isSerial ? 1 : 2;
 
 export async function runEvaluation({ items = DATASET, onResult = () => {} } = {}) {
   const results = [];

@@ -1,6 +1,6 @@
 # API reference
 
-Base URL: `https://<vm-ip-with-dashes>.sslip.io` (local: `http://localhost:8080`).
+Base URL: `https://<your-service>.onrender.com` (local: `http://localhost:8080`).
 All bodies are JSON. Authenticated endpoints need `Authorization: Bearer <jwt>`.
 Errors: `{ "error": "message", "details": ... }` with a 4xx/5xx status.
 

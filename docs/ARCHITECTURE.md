@@ -4,10 +4,10 @@
 
 ```mermaid
 flowchart LR
-  U[User browser<br/>React SPA on Vercel] -- REST + JWT --> API[Express API<br/>Oracle Cloud VM]
+  U[User browser<br/>React SPA on Vercel] -- REST + JWT --> API[Express API<br/>Render]
   U <-- Socket.IO (JWT) --> API
   API --> DB[(Neon PostgreSQL)]
-  API --> LLM[Local LLM<br/>Mistral 7B GGUF via node-llama-cpp<br/>in-process]
+  API --> LLM[LLM: Mistral API (cloud)<br/>or local Mistral 7B GGUF]
   API --> WIKI[Wikipedia API<br/>evidence retrieval]
   API --> MAIL[Brevo email]
   UR[UptimeRobot] -- GET /health --> API
@@ -62,7 +62,13 @@ The loop is bounded (`MAX_LOOPS = 3`): verification and the specialist hand-off 
 
 All model calls go through the facade `agent/llm.js` (`structured()` and `complete()`), which picks a provider with `LLM_PROVIDER`:
 
-**`local` (default) — `agent/providers/local.js`**
+**`mistral` / `api` (cloud deployment) — `agent/providers/openai.js`**
+- Any OpenAI-compatible Chat Completions API; default Mistral AI (`https://api.mistral.ai/v1`, `ministral-8b-latest`, free Experiment plan).
+- Structured output via `response_format: json_schema` (automatic fallback to `json_object` if unsupported), schema also stated in the system prompt; replies are parsed, numeric strings coerced and validated with Zod, with one retry on invalid JSON.
+- Free tiers allow ~1 request/second: calls go through a queue spaced by `LLM_API_MIN_INTERVAL_MS`, and 429/5xx responses are retried with backoff (honouring `Retry-After`).
+- Serial like the local model: 1 self-consistency sample by default, evaluations run one scenario at a time.
+
+**`local` (development default) — `agent/providers/local.js`**
 - Loads `LLM.gguf` from the project root (Mistral 7B Instruct v0.2) in-process with **node-llama-cpp**, once, in the background at boot.
 - Each Zod schema is converted to JSON Schema and compiled into a **GBNF grammar**, so the model can only generate valid JSON for that schema; the result is then validated with Zod. Arrays are capped at 4 items to keep generations short.
 - The model has one context sequence; calls are serialised through a queue and each call starts from a cleared history. Parallel agent stages simply wait their turn.

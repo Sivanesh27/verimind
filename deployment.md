@@ -1,6 +1,6 @@
 # VeriMind — Running Locally & Deploying for Free
 
-This guide covers everything needed to run VeriMind on your own computer and to deploy the full software **for free** (backend + your own LLM, frontend, database, email, login and monitoring).
+This guide covers everything needed to run VeriMind on your own computer and to deploy the full software **for free, without a credit card** (backend, LLM, frontend, database, email, login and monitoring).
 
 **Contents**
 
@@ -10,8 +10,8 @@ This guide covers everything needed to run VeriMind on your own computer and to 
 4. [Environment variables reference](#4-environment-variables-reference)
 5. [Free deployment overview](#5-free-deployment-overview)
 6. [Step-by-step free deployment](#6-step-by-step-free-deployment)
-7. [After deployment: updates, roles, maintenance](#7-after-deployment)
-8. [Performance expectations](#8-performance-expectations)
+7. [After deployment](#7-after-deployment)
+8. [Performance and free-tier limits](#8-performance-and-free-tier-limits)
 9. [Troubleshooting](#9-troubleshooting)
 
 ---
@@ -21,19 +21,28 @@ This guide covers everything needed to run VeriMind on your own computer and to 
 ```
 verimind/
 ├── LLM.gguf          your local LLM (Mistral 7B Instruct v0.2, ~3 GB) — NOT committed to git
-├── backend/          Node.js API + trust-aware agent (loads LLM.gguf in-process)
+├── backend/          Node.js API + trust-aware agent
 ├── frontend/         React web app
 ├── docs/             architecture, API, scoring, evaluation docs
-├── deploy/oracle/    setup.sh, deploy.sh, pm2 config for the Oracle Cloud server
-└── .github/workflows/deploy-backend.yml   tests + auto-deploys the backend on every push
+├── render.yaml       Render blueprint (free backend)
+└── .github/workflows/ci.yml   runs tests + frontend build on every push
 ```
 
-| Part | Runs on (local) | Runs on (free cloud) |
+The agent can use **three interchangeable LLMs** — switch with one setting, `LLM_PROVIDER`:
+
+| `LLM_PROVIDER` | Model | Where it runs | Use for |
+|---|---|---|---|
+| `local` | your `LLM.gguf` (Mistral 7B Instruct v0.2) | inside the backend, on your CPU | local development, offline, full privacy (slow: minutes/answer) |
+| `mistral` | Mistral AI API, default `ministral-8b-latest` | Mistral's servers (free Experiment plan) | **free cloud deployment** (fast: seconds/answer) |
+| `anthropic` | Claude | Anthropic API (paid) | optional |
+
+| Part | Local | Free cloud |
 |---|---|---|
 | Frontend (React) | `http://localhost:5173` | **Vercel** |
-| Backend API + LLM | `http://localhost:8080` | **Oracle Cloud Always Free VM** (Arm, up to 4 cores / 24 GB RAM) |
+| Backend API | `http://localhost:8080` | **Render** (free web service) |
+| LLM | `LLM.gguf` on your PC (or Mistral API) | **Mistral AI API** (free Experiment plan) |
 | Database (PostgreSQL) | Neon, Docker or local Postgres | **Neon** |
-| Email (verification codes, escalation alerts) | printed in backend console | **Brevo** |
+| Email | printed in backend console | **Brevo** |
 | Google login | optional | **Google Identity Services** |
 | Uptime monitoring | — | **UptimeRobot** |
 
@@ -45,11 +54,9 @@ verimind/
 |---|---|
 | **Node.js 20+** (22 recommended) | <https://nodejs.org> — check with `node -v` |
 | **Git** | <https://git-scm.com> |
-| **`LLM.gguf`** in the project root | next to the `backend/` and `frontend/` folders |
-| **~4 GB free RAM** | the model uses ~3.4 GB while loaded |
 | **A PostgreSQL database** | easiest: a free Neon database (see 3.1) |
-
-The model runs on the **CPU** by default. A GPU is optional (see `LLM_GPU`).
+| For `LLM_PROVIDER=local` | `LLM.gguf` in the project root and **~4 GB free RAM** |
+| For `LLM_PROVIDER=mistral` | a free Mistral API key (see 6.2) |
 
 ---
 
@@ -68,9 +75,8 @@ docker run -d --name verimind-pg -e POSTGRES_PASSWORD=pg -e POSTGRES_DB=verimind
 # DATABASE_URL=postgresql://postgres:pg@localhost:5432/verimind
 ```
 
-**Option C — PostgreSQL installed on Windows/macOS/Linux**
-Create a database named `verimind`, then use
-`postgresql://postgres:<your-password>@localhost:5432/verimind`.
+**Option C — PostgreSQL installed on your computer**
+Create a database named `verimind`, then use `postgresql://postgres:<password>@localhost:5432/verimind`.
 
 Tables are created automatically the first time the backend starts.
 
@@ -82,15 +88,17 @@ cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
 npm install
 ```
 
-Edit `backend/.env` — the minimum you must set:
+Edit `backend/.env` — the minimum:
 
 ```ini
 DATABASE_URL=<your connection string from 3.1>
 JWT_SECRET=<long random string>
 ADMIN_EMAILS=you@example.com           # this account becomes admin
-LLM_PROVIDER=local
-LLM_MODEL_PATH=../LLM.gguf
-LLM_GPU=false
+
+# Choose ONE LLM:
+LLM_PROVIDER=local                     # your LLM.gguf on this PC (slow, private)
+# LLM_PROVIDER=mistral                 # Mistral free API (fast) — also set LLM_API_KEY
+# LLM_API_KEY=<your Mistral API key>
 ```
 
 Generate a `JWT_SECRET`:
@@ -105,12 +113,13 @@ npm run dev        # auto-restarts on code changes   (or: npm start)
 
 You should see:
 ```
+[boot] LLM provider: local                 (or: api (ministral-8b-latest @ https://api.mistral.ai/v1))
 [db] schema up to date
 [boot] VeriMind API listening on :8080 (development)
-[llm] local model loaded in 1700ms (gpu=none, ctx=6144)
+[llm] local model loaded in 1700ms ...      (local provider only)
 ```
 
-Check <http://localhost:8080/health> → `{"status":"ok","db":"ok","llm":{"provider":"local",...,"loaded":true}}`
+Check <http://localhost:8080/health> → `{"status":"ok","db":"ok","llm":{...}}`
 
 ### 3.3 Configure and start the frontend
 
@@ -138,67 +147,67 @@ VITE_GOOGLE_CLIENT_ID=          # optional; leave empty to hide the Google butto
    ```
    [email:dev] to=you@example.com subject="Verify your VeriMind email" ... Your email verification code is: 123456 ...
    ```
-3. Enter the code → you land on the **Agent** page. Try the scenario chips (Factual, Hallucination trap, Ambiguous, Tool check…).
+3. Enter the code → **Agent** page. Try the scenario chips (Factual, Hallucination trap, Ambiguous, Tool check…).
 4. Use the ☀ / ◐ / ☾ switch (sidebar) for light, system or dark theme.
 
 ### 3.5 Optional local extras
 
 | Want | Do |
 |---|---|
-| Real emails locally | set `BREVO_API_KEY` and `MAIL_FROM_EMAIL` in `backend/.env` (see 6.6) |
-| Google login locally | create an OAuth client (6.7) with origin `http://localhost:5173`; set `GOOGLE_CLIENT_ID` (backend) and `VITE_GOOGLE_CLIENT_ID` (frontend) |
-| Use a GPU | `LLM_GPU=auto` (or `cuda` / `vulkan` / `metal`) — needs ≥ 4 GB VRAM |
+| Fast answers locally | `LLM_PROVIDER=mistral` + `LLM_API_KEY` (see 6.2) |
+| Real emails locally | set `BREVO_API_KEY` and `MAIL_FROM_EMAIL` (see 6.6) |
+| Google login locally | OAuth client (6.7) with origin `http://localhost:5173`; set `GOOGLE_CLIENT_ID` and `VITE_GOOGLE_CLIENT_ID` |
+| Use a GPU for `LLM.gguf` | `LLM_GPU=auto` (or `cuda` / `vulkan` / `metal`) — needs ≥ 4 GB VRAM |
 | Run unit tests | `cd backend && npm test` |
-| Run the evaluation from the terminal | `cd backend && npm run eval -- tool ambiguous` (or no args for all scenarios) |
+| Run the evaluation from the terminal | `cd backend && npm run eval -- tool ambiguous` (no args = all scenarios) |
 | Production build of the frontend | `cd frontend && npm run build && npm run preview` |
 
 ### 3.6 Stop / restart
 
-Press `Ctrl + C` in each terminal. Next time just run `npm run dev` in `backend/` and `frontend/` again (no reinstall needed).
-
-### 3.7 Share your local app publicly (optional, free)
-
-Your PC can serve the backend to the internet through a Cloudflare tunnel:
-```bash
-# install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
-cloudflared tunnel --url http://localhost:8080
-```
-It prints `https://<random>.trycloudflare.com` — use it as `VITE_API_URL` for a Vercel frontend. Works only while your PC is on; the URL changes each run unless you create a named tunnel.
+`Ctrl + C` in each terminal. Next time just run `npm run dev` in `backend/` and `frontend/` again.
 
 ---
 
 ## 4. Environment variables reference
 
-### Backend (`backend/.env` — on your PC and on the Oracle VM)
+### Backend (`backend/.env` locally, Render → Environment in the cloud)
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
 | `JWT_SECRET` | ✅ | — | Secret for login tokens (long random string) |
-| `PORT` | | `8080` (`7860` in Docker) | API port |
+| `PORT` | | `8080` | API port (Render sets it automatically) |
 | `NODE_ENV` | | `development` | `production` in the cloud |
 | `CORS_ORIGINS` | ✅ cloud | `http://localhost:5173` | Allowed frontend origins, comma-separated, no trailing slash |
 | `FRONTEND_URL` | | `http://localhost:5173` | Used for links in emails |
 | `ADMIN_EMAILS` | | — | Emails that automatically get the admin role |
 | `JWT_EXPIRES_IN` | | `7d` | Session length |
-| `LLM_PROVIDER` | | `local` | `local` = your GGUF model; `anthropic` = Claude API |
+| `LLM_PROVIDER` | | `local` | `local`, `mistral` (any OpenAI-compatible API) or `anthropic` |
+| **Mistral / API provider** | | | |
+| `LLM_API_KEY` | ✅ for `mistral` | — | Mistral API key (console.mistral.ai) |
+| `LLM_API_BASE_URL` | | `https://api.mistral.ai/v1` | Any OpenAI-compatible endpoint (Groq, OpenRouter, llama.cpp server) |
+| `LLM_API_MODEL` | | `ministral-8b-latest` | e.g. `mistral-small-latest` for higher quality |
+| `LLM_API_MIN_INTERVAL_MS` | | `1100` | Gap between API calls (free tier ≈ 1 request/second) |
+| `LLM_API_JSON_MODE` | | `json_schema` | `json_object` if the API doesn't support JSON schemas |
+| **Local provider** | | | |
 | `LLM_MODEL_PATH` | | `../LLM.gguf` | Model file path (relative to `backend/` or absolute) |
-| `LLM_MODEL_URL` | ✅ cloud | — | Download link for the model if the file is missing (first boot) |
-| `LLM_MODEL_TOKEN` | | — | Hugging Face read token, only for a private model repo |
 | `LLM_MODEL_NAME` | | `Mistral 7B Instruct v0.2 (GGUF)` | Display name |
 | `LLM_CONTEXT_SIZE` | | `6144` | Context window (more = more RAM) |
 | `LLM_THREADS` | | `0` (auto) | CPU threads |
 | `LLM_GPU` | | `false` | `false` = CPU; `auto` / `cuda` / `vulkan` / `metal` |
-| `LLM_SAMPLES` | | `1` | Extra self-consistency samples per question (each = one more model call) |
+| `LLM_MODEL_URL`, `LLM_MODEL_TOKEN` | | — | Download the GGUF on first boot (servers without the file) |
+| **Agent** | | | |
+| `LLM_SAMPLES` | | `1` | Extra self-consistency samples per question (each = one more call) |
 | `CONFIDENCE_HIGH` | | `0.8` | Score needed to answer directly |
 | `CONFIDENCE_MEDIUM` | | `0.55` | Below this the agent clarifies / hands over / escalates |
+| **Integrations** | | | |
 | `GOOGLE_CLIENT_ID` | | — | Enables Google sign-in |
 | `BREVO_API_KEY` | | — | Enables real emails (otherwise printed to console) |
 | `MAIL_FROM_EMAIL` | with Brevo | — | Verified Brevo sender |
 | `MAIL_FROM_NAME` | | `VeriMind` | Sender name |
-| `ANTHROPIC_API_KEY`, `LLM_MODEL` | only if `LLM_PROVIDER=anthropic` | — | Claude API alternative |
+| `ANTHROPIC_API_KEY`, `LLM_MODEL` | for `anthropic` | — | Claude API alternative |
 
-### Frontend (`frontend/.env` locally, Vercel settings in the cloud)
+### Frontend (`frontend/.env` locally, Vercel → Settings → Environment Variables in the cloud)
 
 | Variable | Description |
 |---|---|
@@ -212,284 +221,174 @@ It prints `https://<random>.trycloudflare.com` — use it as `VITE_API_URL` for 
 ## 5. Free deployment overview
 
 ```
-                        git push (main)
- GitHub repo ─────────────────────────────────────────┐
-   │                                                  │
-   │ GitHub Actions: test → SSH → deploy.sh           │ Vercel auto-deploy (frontend/)
-   ▼                                                  ▼
- Oracle Cloud Always Free VM                      Vercel ◄──── users (browser)
- ┌──────────────────────────────────────┐            │
- │ Caddy  (HTTPS, https://<ip>.sslip.io) │◄───────────┘ REST + WebSocket
- │   └─► Node.js API (pm2)  :8080        │
- │        └─ LLM.gguf (Mistral 7B) in RAM│
- └──────────────────────────────────────┘
-   ├──► Neon PostgreSQL     ├──► Brevo (email)
-   ├──► Google (login)      └──► Wikipedia (evidence)
- UptimeRobot ──► /health every 5 min (downtime alerts)
+                 git push (main)
+ GitHub repo ──────────────┬──────────────────────────┐
+   │ (CI: tests + build)   │ auto-deploy backend/     │ auto-deploy frontend/
+                           ▼                          ▼
+                        Render (free)              Vercel (free) ◄──── users
+                        Node.js API ◄──────────────────┘ REST + WebSocket
+                           ├──► Mistral AI API (LLM, free Experiment plan)
+                           ├──► Neon PostgreSQL (free)
+                           ├──► Brevo (email, free)
+                           ├──► Google (login check)
+                           └──► Wikipedia (evidence)
+ UptimeRobot ──► /health every 5 min (alerts + keeps the free Render service awake)
 ```
 
-| Service | What for | Free tier |
-|---|---|---|
-| GitHub + Actions | code, CI/CD | free |
-| **Oracle Cloud Always Free** | backend + LLM | Arm VM up to **4 cores, 24 GB RAM**, 200 GB disk — free forever |
-| sslip.io + Caddy | HTTPS domain + certificate | free, no signup |
-| Vercel (Hobby) | frontend | free |
-| Neon | database | 0.5 GB |
-| Brevo | email | 300 emails/day |
-| Google Identity Services | Google login | free |
-| UptimeRobot | monitoring | 50 monitors |
+| Service | What for | Free tier | Card needed? |
+|---|---|---|---|
+| GitHub + Actions | code, CI | free | No |
+| **Mistral AI** (Experiment plan) | LLM | free, rate-limited (~1 request/second) | **No** — phone verification only |
+| **Render** (Free instance) | backend | 512 MB RAM, 750 h/month, sleeps after 15 min idle | Officially no (occasionally asked as an anti-fraud check) |
+| Vercel (Hobby) | frontend | free | No |
+| Neon | database | 0.5 GB | No |
+| Brevo | email | 300 emails/day | No |
+| Google Identity Services | Google login | free | No |
+| UptimeRobot | monitoring | 50 monitors, 5-min checks | No |
 
-> **Why Oracle?** The model needs ~4 GB RAM. Render's free plan has 512 MB, and Hugging Face now charges for Docker/CPU Spaces. Oracle's Always Free Arm VM gives up to 24 GB RAM at no cost, permanently.
+> **Why Mistral's API instead of `LLM.gguf` in the cloud?** The GGUF model needs ~4 GB RAM; free backend hosts give 512 MB. Mistral hosts its own models for free on the Experiment plan, so the backend stays small. Your `LLM.gguf` keeps working locally (`LLM_PROVIDER=local`).
 >
-> **About the card:** Oracle asks for a credit/debit card at signup **only to verify identity**. Resources marked *Always Free* are never charged. Do **not** click "Upgrade to Pay As You Go" if you want to stay 100% free — then nothing can ever be billed.
+> **Mistral free plan notes:** requests on the Experiment plan may be used by Mistral to improve its models — don't send sensitive data. Mistral 7B itself has been retired from their API; the default `ministral-8b-latest` is its small successor.
 
 ---
 
 ## 6. Step-by-step free deployment
 
-Do the steps **in order**. Keep a notepad for: VM public IP, API URL, Neon URL, Vercel URL, Brevo key, Google client ID.
+Do the steps **in order**. Keep a notepad for: Mistral key, Neon URL, Render URL, Vercel URL, Brevo key, Google client ID.
 
 ### 6.1 Push the code to GitHub
 
-1. On <https://github.com/new> create a repository named `verimind` (**Public** is simplest — the VM clones it without a password; secrets are never in the code).
-2. In the project folder:
+Already done for this project: **<https://github.com/Sivanesh27/verimind>**. To publish later changes:
 
-```bash
-cd verimind
-git status          # LLM.gguf, backend/.env, frontend/.env must NOT be listed
-git add .
-git commit -m "VeriMind: trust-aware AI agent"
-git branch -M main
-git remote add origin https://github.com/<your-username>/verimind.git   # skip if already added
-git push -u origin main
-```
-
-> **Private repo?** On the VM (step 6.3) clone with a token instead:
-> `https://<your-username>:<github-token>@github.com/<your-username>/verimind.git`
-> (GitHub → Settings → Developer settings → Fine-grained token with *Contents: Read-only* on this repo.)
-
-### 6.2 Create the Oracle Cloud VM
-
-**a. Sign up**
-1. <https://signup.cloud.oracle.com> → fill in details → choose a **Home Region** near you (e.g. *India West (Mumbai)* or *India South (Hyderabad)*). The home region cannot be changed later.
-2. Verify the card (a small temporary hold may appear, then is released). Account activation can take a few minutes.
-
-**b. Create the instance**
-1. Console → ☰ → **Compute → Instances → Create instance**.
-2. **Name:** `verimind`.
-3. **Image and shape → Edit:**
-   - **Image:** *Canonical Ubuntu 22.04* (or 24.04).
-   - **Shape:** *Change shape → Ampere → `VM.Standard.A1.Flex`* — set **4 OCPUs** and **24 GB memory** (the "Always Free-eligible" label must be shown). Minimum that works: 2 OCPUs / 12 GB.
-4. **Networking:** keep the default new VCN and **Assign a public IPv4 address = Yes**.
-5. **Add SSH keys:** *Generate a key pair for me* → **Save private key** (e.g. `ssh-key-verimind.key`). Keep it safe — you need it to log in and for GitHub Actions.
-6. **Boot volume:** default (≈ 47 GB) is fine.
-7. **Create.** After ~1 minute the state is **Running**; copy the **Public IP address**.
-
-> **"Out of capacity for shape VM.Standard.A1.Flex"** is common in busy regions. Retry later, try another *Availability Domain* in the placement section, or temporarily use 2 OCPU / 12 GB.
-
-**c. Open ports 80 and 443 in Oracle's network firewall**
-1. Instance page → **Primary VNIC → Subnet** link → **Security Lists** → *Default Security List*.
-2. **Add Ingress Rules** (twice):
-   - Source CIDR `0.0.0.0/0`, IP protocol TCP, destination port **80**
-   - Source CIDR `0.0.0.0/0`, IP protocol TCP, destination port **443**
-3. Save. (Port 22 for SSH is already open. The setup script opens the VM's own firewall.)
-
-### 6.3 Install VeriMind on the VM
-
-**a. Connect with SSH** (Windows PowerShell, macOS or Linux terminal):
-
-```powershell
-# Windows: restrict the key file first, otherwise ssh refuses it
-icacls .\ssh-key-verimind.key /inheritance:r /grant:r "$($env:USERNAME):(R)"
-
-ssh -i .\ssh-key-verimind.key ubuntu@<PUBLIC_IP>
-```
-(macOS/Linux: `chmod 600 ssh-key-verimind.key && ssh -i ssh-key-verimind.key ubuntu@<PUBLIC_IP>`)
-
-**b. Run the setup script** (on the VM):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/<your-username>/verimind/main/deploy/oracle/setup.sh -o setup.sh
-bash setup.sh https://github.com/<your-username>/verimind.git
-```
-
-It installs Node.js 22, pm2 and Caddy, clones the repo to `~/verimind`, installs dependencies, opens ports 80/443 on the VM, configures HTTPS and starts the API. At the end it prints your API URL:
-
-```
-Your API URL:  https://140-238-12-34.sslip.io
-```
-
-(sslip.io maps `140-238-12-34.sslip.io` to the IP `140.238.12.34`; Caddy gets a free Let's Encrypt certificate for it automatically.) Note this URL — it is your **API URL**.
-
-The API will report errors until the model and settings are in place (next steps).
-
-### 6.4 Put the model on the VM
-
-**Option A — upload from your PC** (simplest; ~3 GB). In a **new terminal on your PC**, from the `verimind` folder:
-
-```powershell
-scp -i .\ssh-key-verimind.key .\LLM.gguf ubuntu@<PUBLIC_IP>:/home/ubuntu/verimind/LLM.gguf
-```
-
-**Option B — download on the VM** (faster if your upload is slow): first upload `LLM.gguf` once to a free Hugging Face *model* repository (Hugging Face model repos are still free), then on the VM:
-
-```bash
-curl -L -o ~/verimind/LLM.gguf https://huggingface.co/<hf-username>/verimind-llm/resolve/main/LLM.gguf
-```
-
-Check on the VM: `ls -lh ~/verimind/LLM.gguf` → about 2.9 GB.
-
-### 6.5 Create the Neon database
-
-1. <https://neon.tech> → **New project** → database `verimind`, region close to your VM (e.g. AWS ap-south-1 / Singapore).
-2. **Connection Details → Pooled connection** → copy the string → `DATABASE_URL`.
-
-### 6.6 Configure the backend on the VM
-
-On the VM:
-
-```bash
-nano ~/verimind/backend/.env
-```
-
-Set at least these values (Ctrl+O, Enter to save; Ctrl+X to exit):
-
-```ini
-NODE_ENV=production
-PORT=8080
-DATABASE_URL=<Neon pooled connection string>
-JWT_SECRET=<run: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))">
-ADMIN_EMAILS=<your email>
-CORS_ORIGINS=https://<your-project>.vercel.app      # fill in after step 6.7
-FRONTEND_URL=https://<your-project>.vercel.app
-
-LLM_PROVIDER=local
-LLM_MODEL_PATH=../LLM.gguf
-LLM_GPU=false
-LLM_THREADS=0
-LLM_SAMPLES=1
-
-BREVO_API_KEY=            # step 6.8
-MAIL_FROM_EMAIL=          # step 6.8
-GOOGLE_CLIENT_ID=         # step 6.9
-```
-
-Restart and watch the logs:
-
-```bash
-pm2 restart verimind-api
-pm2 logs verimind-api            # Ctrl+C to stop watching
-```
-
-Expected:
-```
-[db] schema up to date
-[boot] VeriMind API listening on :8080 (production)
-[llm] local model loaded in ...ms (gpu=none, ctx=6144)
-```
-
-From your PC, open `https://<ip-with-dashes>.sslip.io/health` → `{"status":"ok","db":"ok","llm":{...,"loaded":true}}` 🎉
-
-### 6.7 Deploy the frontend to Vercel
-
-1. <https://vercel.com> → sign in with GitHub → **Add New → Project** → import `verimind`.
-2. **Root Directory:** `frontend` (Vite is detected automatically).
-3. **Environment Variables:**
-   - `VITE_API_URL` = your API URL, e.g. `https://140-238-12-34.sslip.io` (no trailing slash)
-   - `VITE_GOOGLE_CLIENT_ID` = from step 6.9 (add later, then redeploy)
-4. **Deploy** → you get `https://<your-project>.vercel.app`.
-5. On the VM, put that URL into `CORS_ORIGINS` and `FRONTEND_URL` in `~/verimind/backend/.env`, then `pm2 restart verimind-api`.
-
-### 6.8 Brevo (emails)
-
-1. <https://www.brevo.com> → sign up.
-2. **Senders, Domains & Dedicated IPs → Senders → Add a sender** → verify the email → `MAIL_FROM_EMAIL`.
-3. **SMTP & API → API Keys → Generate a new API key** → `BREVO_API_KEY`.
-4. Add both to `~/verimind/backend/.env` on the VM → `pm2 restart verimind-api`.
-
-Until then, verification codes appear in `pm2 logs verimind-api`.
-
-### 6.9 Google sign-in
-
-1. <https://console.cloud.google.com> → create project `VeriMind`.
-2. **APIs & Services → OAuth consent screen** → External → app name, support email → save → **Publish app**.
-3. **Credentials → Create credentials → OAuth client ID → Web application**.
-   **Authorized JavaScript origins:** `http://localhost:5173` and `https://<your-project>.vercel.app`. No redirect URI needed.
-4. Copy the **Client ID**:
-   - VM: `GOOGLE_CLIENT_ID=...` in `backend/.env` → `pm2 restart verimind-api`
-   - Vercel: `VITE_GOOGLE_CLIENT_ID` → **Deployments → Redeploy**
-
-### 6.10 Automatic deployments from GitHub
-
-GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
-
-| Secret | Value |
-|---|---|
-| `ORACLE_HOST` | VM public IP |
-| `ORACLE_USER` | `ubuntu` |
-| `ORACLE_SSH_KEY` | the **entire contents** of `ssh-key-verimind.key` (including the `-----BEGIN…` / `-----END…` lines) |
-
-Test it: GitHub → **Actions → Deploy backend to Oracle Cloud → Run workflow**. It runs the backend tests, SSHes into the VM and runs `deploy/oracle/deploy.sh` (git pull → npm ci → pm2 reload).
-
-From now on: every push to `main` that changes `backend/` redeploys the API; every push redeploys the frontend on Vercel.
-
-### 6.11 UptimeRobot (monitoring)
-
-<https://uptimerobot.com> → **Add New Monitor** → HTTP(s) → URL `https://<ip-with-dashes>.sslip.io/health` → interval 5 minutes → alert contact: your email → **Create**.
-
-### 6.12 Final checklist
-
-- [ ] `https://<ip>.sslip.io/health` → `db: ok`, `llm.loaded: true`
-- [ ] Vercel site opens; ☀ / ◐ / ☾ theme switch works; top-right shows **Live**
-- [ ] Register → code email arrives → verify → Agent page
-- [ ] *Continue with Google* works
-- [ ] "What is 48731 multiplied by 9257?" → live steps → calculator verification
-- [ ] "Is it safe to take it with alcohol?" → clarifying question
-- [ ] Fabricated question → escalation in **Review queue** (admin) + email
-- [ ] GitHub Action run is green
-
----
-
-## 7. After deployment
-
-**Update the app** (from your PC):
 ```bash
 git add .
 git commit -m "Describe your change"
 git push
 ```
 
-**Useful commands on the VM**
+Never commit `LLM.gguf` or `.env` files (they are in `.gitignore`).
 
-| Command | Does |
-|---|---|
-| `pm2 status` | is the API running? memory/CPU |
-| `pm2 logs verimind-api` | live logs (Ctrl+C to exit) |
-| `pm2 restart verimind-api` | restart after editing `.env` |
-| `bash ~/verimind/deploy/oracle/deploy.sh` | manual deploy (pull + install + restart) |
-| `free -h` | memory usage |
-| `sudo systemctl status caddy` | HTTPS proxy status |
-| `sudo journalctl -u caddy -n 50` | HTTPS / certificate logs |
+### 6.2 Get a free Mistral API key
 
-The API starts automatically after a VM reboot (pm2 startup) and Caddy renews the HTTPS certificate automatically.
+1. Go to <https://console.mistral.ai> → sign up (email or Google).
+2. Create/choose a workspace → **Billing / Plans** → choose the free **Experiment** plan → verify your **phone number** (no card).
+3. **API Keys → Create new key** → copy it (shown once). This is `LLM_API_KEY`.
 
-**Roles** — emails in `ADMIN_EMAILS` become admin on every start; admins promote others on the **Users** page (reviewer / admin).
+### 6.3 Create the Neon database
 
-**Backups** — Neon keeps point-in-time history (Neon dashboard → Restore). The VM holds no data except `.env` and the model.
+1. <https://neon.tech> → **New project** → database `verimind`, region **AWS Asia Pacific (Singapore)** (same region as the Render blueprint).
+2. **Connection Details → Pooled connection** → copy the string → `DATABASE_URL`.
 
-**Keep the VM "active"** — Oracle may reclaim Always Free instances that sit almost completely idle for 7 days. Normal use plus the UptimeRobot checks usually avoid this; if you get an idle warning email, simply use the app.
+### 6.4 Deploy the backend on Render
+
+1. <https://render.com> → **Sign up with GitHub**.
+2. **New → Blueprint** → connect the `verimind` repository → Render reads `render.yaml` and proposes the **verimind-api** free web service.
+3. Fill in the values it asks for:
+
+   | Key | Value |
+   |---|---|
+   | `LLM_API_KEY` | Mistral key (6.2) |
+   | `DATABASE_URL` | Neon pooled string (6.3) |
+   | `ADMIN_EMAILS` | your email, e.g. `sivaneshakumar@htic.iitm.ac.in` |
+   | `CORS_ORIGINS` | your Vercel URL — not known yet: enter `http://localhost:5173` for now, update after 6.5 |
+   | `FRONTEND_URL` | same as `CORS_ORIGINS` |
+   | `GOOGLE_CLIENT_ID`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` | leave empty for now (6.6, 6.7) |
+
+   `JWT_SECRET` is generated automatically.
+4. **Apply** → the first build takes a few minutes. Logs should show:
+   ```
+   [boot] LLM provider: api (ministral-8b-latest @ https://api.mistral.ai/v1)
+   [db] schema up to date
+   [boot] VeriMind API listening on :10000 (production)
+   ```
+5. Your API URL: `https://verimind-api.onrender.com` (or similar — shown at the top of the service page).
+   Open `…/health` → `{"status":"ok","db":"ok","llm":{"provider":"api",...}}`.
+
+> **Manual alternative (no blueprint):** New → Web Service → repo → Root Directory `backend`, Runtime Node, Build `npm ci`, Start `npm start`, Instance type **Free**, Health check `/health`; add the variables from `render.yaml` and the table above.
+
+### 6.5 Deploy the frontend on Vercel
+
+1. <https://vercel.com> → **Sign up with GitHub** → **Add New → Project** → import `verimind`.
+2. **Root Directory:** `frontend` (Vite is detected automatically).
+3. **Environment Variables:**
+   - `VITE_API_URL` = your Render URL, e.g. `https://verimind-api.onrender.com` (no trailing slash)
+   - `VITE_GOOGLE_CLIENT_ID` = from 6.7 (add later, then redeploy)
+4. **Deploy** → you get `https://<project>.vercel.app`.
+5. Back in **Render → verimind-api → Environment**: set `CORS_ORIGINS` and `FRONTEND_URL` to that Vercel URL → **Save** (Render redeploys).
+
+### 6.6 Brevo (emails)
+
+1. <https://www.brevo.com> → sign up.
+2. **Senders, Domains & Dedicated IPs → Senders → Add a sender** → verify the email → `MAIL_FROM_EMAIL`.
+3. **SMTP & API → API Keys → Generate a new API key** → `BREVO_API_KEY`.
+4. Add both in Render → Environment → Save.
+
+Until then, verification codes appear in **Render → Logs** (`[email:dev] … code is: 123456`).
+
+### 6.7 Google sign-in
+
+1. <https://console.cloud.google.com> → create project `VeriMind` (no billing account needed).
+2. **APIs & Services → OAuth consent screen** → External → app name, support email → save → **Publish app**.
+3. **Credentials → Create credentials → OAuth client ID → Web application**.
+   **Authorized JavaScript origins:** `http://localhost:5173` and `https://<project>.vercel.app`. No redirect URI needed.
+4. Copy the **Client ID**:
+   - Render → Environment → `GOOGLE_CLIENT_ID` → Save
+   - Vercel → Settings → Environment Variables → `VITE_GOOGLE_CLIENT_ID` → **Deployments → Redeploy**
+
+### 6.8 UptimeRobot (monitoring + keep-awake)
+
+<https://uptimerobot.com> → **Add New Monitor** → HTTP(s) → URL `https://<your-render-url>/health` → interval **5 minutes** → alert contact: your email → **Create**.
+
+Render's free service sleeps after 15 minutes without traffic (first request then takes ~1 minute). The 5-minute pings keep it awake; one always-on service fits in Render's 750 free hours/month.
+
+### 6.9 Final checklist
+
+- [ ] Render `/health` → `db: ok`, `llm.provider: api`
+- [ ] Vercel site opens; ☀ / ◐ / ☾ theme switch works; sidebar shows **Live**
+- [ ] Register → code arrives (email or Render logs) → verify → Agent page
+- [ ] *Continue with Google* works
+- [ ] "What is 48731 multiplied by 9257?" → live steps → calculator verification
+- [ ] "Is it safe to take it with alcohol?" → clarifying question
+- [ ] Fabricated question → escalation in **Review queue** (admin) + email
+- [ ] GitHub → **Actions** → CI is green
 
 ---
 
-## 8. Performance expectations
+## 7. After deployment
 
-| Where | Hardware | Time per trust-aware answer |
-|---|---|---|
-| Your laptop (4 threads, CPU) | measured | ~4–5 min (each model call 12–100 s) |
-| Oracle A1 VM, 4 Arm cores | CPU | a few minutes (similar or faster than the laptop) |
-| Machine with a ≥ 4 GB GPU (`LLM_GPU=auto`) | GPU | seconds per call |
+**Update the app:** `git add . && git commit -m "…" && git push` → Render redeploys the backend, Vercel the frontend, GitHub Actions runs the tests.
 
-The agent makes ~6–8 model calls per question; every step streams live to the UI. Tips: keep `LLM_SAMPLES=1`; use **Baseline** mode for quick demos; run evaluations by category (`npm run eval -- tool`).
+**Change settings:** Render → Environment (auto-redeploys) · Vercel → Environment Variables (then Redeploy).
+
+**Switch the LLM without code changes** (Render → Environment):
+
+| Goal | Set |
+|---|---|
+| Higher-quality Mistral model | `LLM_API_MODEL=mistral-small-latest` |
+| Groq free tier instead | `LLM_API_BASE_URL=https://api.groq.com/openai/v1`, `LLM_API_MODEL=llama-3.1-8b-instant`, `LLM_API_KEY=<groq key>` |
+| Your own `LLM.gguf` served from your PC | run `llama-server -m LLM.gguf --port 8081` + `cloudflared tunnel --url http://localhost:8081`; set `LLM_API_BASE_URL=https://<tunnel>/v1`, `LLM_API_JSON_MODE=json_object` (works only while your PC is on) |
+
+**Roles:** emails in `ADMIN_EMAILS` become admin on every start; admins promote others on the **Users** page.
+
+**Logs:** backend → Render → Logs · frontend builds → Vercel → Deployments · tests → GitHub → Actions.
+
+**Backups:** Neon keeps point-in-time history (Neon dashboard → Restore).
+
+---
+
+## 8. Performance and free-tier limits
+
+| Setup | Time per trust-aware answer |
+|---|---|
+| Cloud: Render + Mistral free API | ~10–30 s (6–8 calls, spaced ~1 s apart for the rate limit) |
+| Local: `LLM_PROVIDER=mistral` | same |
+| Local: `LLM_PROVIDER=local` on a 4-thread laptop CPU | ~4–5 min (measured) |
+
+Limits to know:
+- **Mistral Experiment plan:** ~1 request/second and monthly token limits (see console.mistral.ai → Limits). VeriMind queues and spaces calls and retries rate-limit errors automatically. A full 19-scenario evaluation makes ~200 calls — run it occasionally, or by category.
+- **Render free:** sleeps after 15 min idle (UptimeRobot prevents it); 512 MB RAM; restarts on each deploy.
+- **Neon free:** 0.5 GB storage — plenty for this app.
+- **Brevo free:** 300 emails/day.
 
 ---
 
@@ -503,34 +402,30 @@ The agent makes ~6–8 model calls per question; every step streams live to the 
 | `ECONNREFUSED` / database errors at startup | Database not running or wrong `DATABASE_URL`. |
 | `Local model not found` | Put `LLM.gguf` in the project root, or set `LLM_MODEL_PATH`. |
 | `too large for the available VRAM` | Set `LLM_GPU=false` (integrated graphics), or lower `LLM_CONTEXT_SIZE`. |
-| Computer becomes very slow / out of memory | The model needs ~4 GB free RAM — close other apps, lower `LLM_CONTEXT_SIZE` to 4096. |
-| Blank page after login | Update to the latest code (fixed), hard-refresh (`Ctrl+Shift+R`); check the browser console (F12). |
-| Logged out unexpectedly | Update to the latest code (fixed: only an invalid session logs you out). |
+| Computer slow / out of memory with `local` | The model needs ~4 GB free RAM — close other apps, or use `LLM_PROVIDER=mistral`. |
+| Blank page after login | Pull the latest code (fixed); hard-refresh with `Ctrl+Shift+R`; check the browser console (F12). |
 | "Too many attempts" | Sign-in endpoints allow 50 requests / 15 min per IP — wait a few minutes. |
 | Verification code not received | Without Brevo the code is in the backend terminal (`[email:dev] …`). |
 | Google button missing | `VITE_GOOGLE_CLIENT_ID` empty → set it and restart `npm run dev`. |
 | Socket shows **Offline** | Backend not running, or `CORS_ORIGINS` doesn't include `http://localhost:5173`. |
-| `Local model produced incomplete JSON` | Token budget ran out — raise `MAX_TOKENS` in `backend/src/agent/providers/local.js`. |
-| Port already in use | Change `PORT` (backend) or run `npm run dev -- --port 5174` (frontend, then add it to `CORS_ORIGINS`). |
+| Port already in use | Change `PORT` (backend) or `npm run dev -- --port 5174` (frontend, and add it to `CORS_ORIGINS`). |
 
-### Oracle Cloud / production
+### Cloud
 
 | Problem | Fix |
 |---|---|
-| "Out of capacity" when creating the VM | Retry later, pick another Availability Domain, or use 2 OCPU / 12 GB. |
-| `ssh: Permission denied (publickey)` | Use `-i <key file>` and user `ubuntu`; on Windows run the `icacls` command from 6.3a. |
-| `ssh` times out | Instance not running, wrong IP, or no public IP assigned. |
-| `/health` doesn't load in the browser | Ingress rules for 80/443 missing (6.2c); check `sudo systemctl status caddy`. |
-| Caddy log: certificate / ACME errors | Port 80 must be reachable from the internet (6.2c) — Let's Encrypt validates over it. |
-| `pm2 logs` shows `Local model not found` | Model not at `~/verimind/LLM.gguf` — redo 6.4. |
-| `pm2 logs` shows database errors | Fix `DATABASE_URL` in `backend/.env`, then `pm2 restart verimind-api`. |
-| Browser console: CORS error | `CORS_ORIGINS` must exactly equal the Vercel URL (`https://…vercel.app`, no trailing slash) → restart. |
-| Socket shows **Offline** in production | Same CORS issue; or open `/health` once to confirm HTTPS works. |
+| Render asks for a card | Occasional anti-fraud check. Try again later / another browser, or contact Render support. |
+| Render build fails in `npm ci` | Check the log; make sure Root Directory is `backend` and `NODE_LLAMA_CPP_SKIP_DOWNLOAD=true` is set. |
+| Logs: `LLM_API_KEY is not set` | Add `LLM_API_KEY` in Render → Environment. |
+| Agent fails with `LLM API error 401` | Wrong or revoked Mistral key — create a new one. |
+| `LLM API error 429` after retries | Free-tier rate/monthly limit hit — wait, raise `LLM_API_MIN_INTERVAL_MS` to 2000, or keep `LLM_SAMPLES=1`. |
+| `LLM API error 400 … model` | Model name not available — use `ministral-8b-latest` or `mistral-small-latest`. |
+| `Model returned invalid JSON` | Set `LLM_API_JSON_MODE=json_object`, or try `LLM_API_MODEL=mistral-small-latest`. |
+| First request after a while takes ~1 min | Render free instance was asleep — set up UptimeRobot (6.8). |
+| Browser console: CORS error | `CORS_ORIGINS` must exactly equal the Vercel URL (`https://…vercel.app`, no trailing slash). |
+| Socket shows **Offline** in production | Same CORS issue, or the backend is asleep/redeploying. |
 | Google: "origin not allowed" | Add the exact Vercel URL to the OAuth client's Authorized JavaScript origins. |
-| No emails | `BREVO_API_KEY` and verified `MAIL_FROM_EMAIL` in `.env`? Look for `[email] Brevo error` in `pm2 logs`. |
-| GitHub Action: "Add ORACLE_HOST…" | Add the three secrets from 6.10. |
-| GitHub Action: SSH authentication failed | `ORACLE_SSH_KEY` must contain the full private key, including BEGIN/END lines. |
-| `bash\r: No such file or directory` on the VM | Script got Windows line endings — `.gitattributes` prevents this; run `sed -i 's/\r$//' deploy/oracle/*.sh`. |
+| No emails | `BREVO_API_KEY` set? Sender verified? Look for `[email] Brevo error` in Render logs. |
 | `git push` rejected: file too large | `LLM.gguf` was committed: `git rm --cached LLM.gguf && git commit -m "Remove model" && git push`. |
 
 ---
