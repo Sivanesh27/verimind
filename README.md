@@ -28,7 +28,7 @@ The live demo streams every reasoning step over WebSockets, keeps a full audit t
 | Layer | Technology | Hosting |
 |---|---|---|
 | Frontend | React 18, Vite, React Router, Recharts, Socket.IO client | Vercel |
-| Backend | Node.js 22, Express, Socket.IO, Zod (Docker) | Hugging Face Spaces (free, 16 GB RAM) |
+| Backend | Node.js 22, Express, Socket.IO, Zod, pm2 + Caddy (HTTPS) | Oracle Cloud Always Free VM (Arm, up to 24 GB RAM) |
 | LLM | **Local Mistral 7B Instruct v0.2** (`LLM.gguf` in the project root) via node-llama-cpp, JSON-schema grammars for structured output. Optional: Anthropic Claude (`LLM_PROVIDER=anthropic`) | Runs inside the API process |
 | Database | PostgreSQL | Neon |
 | Email | Brevo transactional API | Brevo |
@@ -54,7 +54,8 @@ verimind/
 ├── frontend/                React SPA
 │   └── src/{pages,components,context,lib,styles}
 ├── docs/                    architecture, scoring, API, deployment, evaluation, development
-├── .github/workflows/       CI: test + deploy backend to Hugging Face on push
+├── deploy/oracle/           server setup + deploy scripts (Oracle Cloud VM)
+├── .github/workflows/       CI: test + deploy backend to the VM on push
 ```
 
 ## Quick start (local)
@@ -87,7 +88,7 @@ Without `BREVO_API_KEY`, verification codes are printed in the backend console.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, agent pipeline, data model, realtime events |
 | [docs/CONFIDENCE_SCORING.md](docs/CONFIDENCE_SCORING.md) | Signals, weights, caps, thresholds, routing and explanations |
 | [docs/API.md](docs/API.md) | REST endpoints and Socket.IO events |
-| [deployment.md](deployment.md) | **Run locally + 100% free deployment** (GitHub → Hugging Face → Vercel → Neon → Brevo → Google → UptimeRobot) |
+| [deployment.md](deployment.md) | **Run locally + 100% free deployment** (GitHub → Oracle Cloud VM → Vercel → Neon → Brevo → Google → UptimeRobot) |
 | [docs/EVALUATION.md](docs/EVALUATION.md) | Methodology, metrics and how to run experiments |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, conventions, testing, troubleshooting |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Live demonstration walkthrough across scenarios |

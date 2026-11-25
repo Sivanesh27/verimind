@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  U[User browser<br/>React SPA on Vercel] -- REST + JWT --> API[Express API<br/>Hugging Face Space]
+  U[User browser<br/>React SPA on Vercel] -- REST + JWT --> API[Express API<br/>Oracle Cloud VM]
   U <-- Socket.IO (JWT) --> API
   API --> DB[(Neon PostgreSQL)]
   API --> LLM[Local LLM<br/>Mistral 7B GGUF via node-llama-cpp<br/>in-process]
