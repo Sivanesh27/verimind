@@ -26,7 +26,7 @@ services:
       - key: LLM_API_MODEL
         value: ministral-8b-latest
       - key: LLM_API_MIN_INTERVAL_MS
-        value: "1100"
+        value: "3000"
       - key: LLM_SAMPLES
         value: "1"
       # The local model engine is not used on Render; skip its post-install download/build.

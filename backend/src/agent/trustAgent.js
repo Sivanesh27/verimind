@@ -49,7 +49,7 @@ export async function runTrustAgent(query, { onStep = () => {}, context = null }
         const d = await answer(P.ANSWER_SYSTEM, fullQuery);
         return { result: d, detail: `self-reported confidence ${pct(d.confidence)}` };
       }),
-      trace('samples', `Sampling ${SAMPLE_COUNT} independent reasoning paths`, async () => {
+      soft(trace, 'self-consistency sampling', () => trace('samples', `Sampling ${SAMPLE_COUNT} independent reasoning paths`, async () => {
         const s = await Promise.all(
           Array.from({ length: SAMPLE_COUNT }, (_, i) =>
             structured({
@@ -62,7 +62,7 @@ export async function runTrustAgent(query, { onStep = () => {}, context = null }
           ),
         );
         return { result: s, detail: `${s.length} alternative answers` };
-      }),
+      })).then((s) => s || []),
       trace('retrieve', 'Retrieving evidence', async () => {
         const qs = (analysis.search_queries || []).slice(0, 2);
         const found = (await Promise.all(qs.map((q) => searchWikipedia(q)))).flat();
@@ -126,8 +126,17 @@ export async function runTrustAgent(query, { onStep = () => {}, context = null }
   }
 
   function finish({ route, answer: finalAnswer, draftAnswer = null, scored, signals, analysis, state = {}, path, extraFactors = [] }) {
+    const degraded = [...new Set(trace.degraded)];
     const explanation = [
       ...extraFactors,
+      ...(degraded.length
+        ? [{
+            code: 'VERIFICATION_UNAVAILABLE',
+            label: 'Some checks unavailable',
+            severity: 'medium',
+            detail: `Skipped: ${degraded.join(', ')} (the AI service was busy). Confidence relies on fewer signals.`,
+          }]
+        : []),
       ...explainConfidence({
         signals,
         analysis,
@@ -162,8 +171,24 @@ async function answer(system, prompt) {
   return d;
 }
 
+/**
+ * Run an optional stage: if it fails (e.g. the LLM API is rate-limited), the agent continues without that
+ * signal instead of failing the whole run. The gap is recorded and shown in the explanation, and the
+ * missing signal lowers confidence (see buildSignals). Model refusals still propagate.
+ */
+async function soft(trace, label, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof LlmRefusalError) throw err;
+    trace.degraded.push(label);
+    return null;
+  }
+}
+
 async function judgeConsistency(trace, question, answers) {
-  return trace('consistency', 'Checking self-consistency', async () => {
+  if (answers.length < 2) return null;
+  return soft(trace, 'self-consistency check', () => trace('consistency', 'Checking self-consistency', async () => {
     const list = answers.map((a, i) => `Answer ${i + 1}:\n${a}`).join('\n\n');
     const j = await structured({
       system: P.CONSISTENCY_SYSTEM,
@@ -173,12 +198,12 @@ async function judgeConsistency(trace, question, answers) {
     });
     j.agreement = clamp01(j.agreement);
     return { result: j, detail: `agreement ${pct(j.agreement)}` };
-  });
+  }));
 }
 
 async function judgeEvidence(trace, question, proposed, sources) {
   if (!sources.length) return null;
-  return trace('evidence', 'Judging evidence', async () => {
+  return soft(trace, 'evidence check', () => trace('evidence', 'Judging evidence', async () => {
     const ev = sources.map((s, i) => `[${i + 1}] ${s.title} (${s.source})\n${s.snippet}`).join('\n\n');
     const j = await structured({
       system: P.EVIDENCE_SYSTEM,
@@ -188,7 +213,7 @@ async function judgeEvidence(trace, question, proposed, sources) {
     });
     j.support = clamp01(j.support);
     return { result: j, detail: `${j.evidence_relevant ? `support ${pct(j.support)}` : 'evidence not relevant'}${j.contradiction ? ', CONTRADICTION' : ''}` };
-  });
+  }));
 }
 
 /** Medium/low confidence: gather more evidence and re-answer grounded in it. */
@@ -208,8 +233,10 @@ async function verify(trace, question, analysis, state) {
     judgeEvidence(trace, question, draft.answer, sources),
   ]);
   // Agreement between the grounded and ungrounded answer, blended with the original sampling agreement.
-  consistency.agreement = clamp01((consistency.agreement + state.consistency.agreement) / 2);
-  return { ...state, draft, sources, consistency, evidence, verified: true };
+  const merged = consistency && state.consistency
+    ? { ...consistency, agreement: clamp01((consistency.agreement + state.consistency.agreement) / 2) }
+    : consistency || state.consistency;
+  return { ...state, draft, sources, consistency: merged, evidence: evidence || state.evidence, verified: true };
 }
 
 /** Low confidence in a specialist domain: hand over to a domain specialist agent once. */
@@ -223,7 +250,7 @@ async function consultSpecialist(trace, question, analysis, state) {
     judgeConsistency(trace, question, [draft.answer, state.draft.answer]),
     judgeEvidence(trace, question, draft.answer, state.sources),
   ]);
-  return { ...state, draft, consistency, evidence, specialistTried: true };
+  return { ...state, draft, consistency: consistency || state.consistency, evidence: evidence || state.evidence, specialistTried: true };
 }
 
 // --- scoring -----------------------------------------------------------------------------
@@ -272,6 +299,7 @@ function createTracer(steps, onStep) {
       throw err;
     }
   }
+  trace.degraded = []; // optional stages that failed and were skipped
   trace.event = (key, label, detail) => {
     const step = { key, label, status: 'done', detail, startedAt: new Date().toISOString(), durationMs: 0 };
     steps.push(step);

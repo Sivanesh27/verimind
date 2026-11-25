@@ -11,18 +11,20 @@ import { z } from 'zod';
 import { env } from '../../config/env.js';
 
 const MAX_TOKENS = { low: 500, medium: 900, high: 1400 };
-const MAX_RETRIES = 4;
+const MAX_RETRIES = 8;
+const MAX_BACKOFF_MS = 20_000;
 
 let queue = Promise.resolve();
 let lastCallAt = 0;
+let cooldownUntil = 0; // after a 429, every queued call waits until this time
 let schemaModeSupported = env.api.jsonMode === 'json_schema';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Serialise requests and keep at least LLM_API_MIN_INTERVAL_MS between them. */
+/** Serialise requests, keep at least LLM_API_MIN_INTERVAL_MS between them, and honour rate-limit cooldowns. */
 function throttled(fn) {
   const run = queue.then(async () => {
-    const wait = lastCallAt + env.api.minIntervalMs - Date.now();
+    const wait = Math.max(lastCallAt + env.api.minIntervalMs, cooldownUntil) - Date.now();
     if (wait > 0) await sleep(wait);
     try {
       return await fn();
@@ -57,7 +59,13 @@ async function chat(body) {
       throw err;
     }
     const retryAfter = Number(res.headers.get('retry-after'));
-    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1500 * 2 ** attempt);
+    const backoff = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : Math.min(MAX_BACKOFF_MS, 2000 * 2 ** attempt) + Math.random() * 500;
+    // Pause the whole queue, not just this call: other queued calls would hit the same limit.
+    if (res.status === 429) cooldownUntil = Math.max(cooldownUntil, Date.now() + backoff);
+    console.warn(`[llm] API ${res.status}, retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(backoff / 1000)}s`);
+    await sleep(backoff);
   }
 }
 

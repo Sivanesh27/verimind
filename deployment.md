@@ -187,7 +187,7 @@ VITE_GOOGLE_CLIENT_ID=          # optional; leave empty to hide the Google butto
 | `LLM_API_KEY` | ✅ for `mistral` | — | Mistral API key (console.mistral.ai) |
 | `LLM_API_BASE_URL` | | `https://api.mistral.ai/v1` | Any OpenAI-compatible endpoint (Groq, OpenRouter, llama.cpp server) |
 | `LLM_API_MODEL` | | `ministral-8b-latest` | e.g. `mistral-small-latest` for higher quality |
-| `LLM_API_MIN_INTERVAL_MS` | | `1100` | Gap between API calls (free tier ≈ 1 request/second) |
+| `LLM_API_MIN_INTERVAL_MS` | | `1500` (Render blueprint: `3000`) | Gap between API calls; raise it if you see rate-limit (429) errors |
 | `LLM_API_JSON_MODE` | | `json_schema` | `json_object` if the API doesn't support JSON schemas |
 | **Local provider** | | | |
 | `LLM_MODEL_PATH` | | `../LLM.gguf` | Model file path (relative to `backend/` or absolute) |
@@ -380,7 +380,7 @@ Render's free service sleeps after 15 minutes without traffic (first request the
 
 | Setup | Time per trust-aware answer |
 |---|---|
-| Cloud: Render + Mistral free API | ~10–30 s (6–8 calls, spaced ~1 s apart for the rate limit) |
+| Cloud: Render + Mistral free API | ~20–60 s (6–8 calls, spaced 3 s apart for the free-tier rate limit) |
 | Local: `LLM_PROVIDER=mistral` | same |
 | Local: `LLM_PROVIDER=local` on a 4-thread laptop CPU | ~4–5 min (measured) |
 
@@ -418,7 +418,7 @@ Limits to know:
 | Render build fails in `npm ci` | Check the log; make sure Root Directory is `backend` and `NODE_LLAMA_CPP_SKIP_DOWNLOAD=true` is set. |
 | Logs: `LLM_API_KEY is not set` | Add `LLM_API_KEY` in Render → Environment. |
 | Agent fails with `LLM API error 401` | Wrong or revoked Mistral key — create a new one. |
-| `LLM API error 429` after retries | Free-tier rate/monthly limit hit — wait, raise `LLM_API_MIN_INTERVAL_MS` to 2000, or keep `LLM_SAMPLES=1`. |
+| `LLM API error 429` / "Some checks unavailable" | Free-tier rate limit. VeriMind retries and skips optional checks automatically; set `LLM_API_MIN_INTERVAL_MS=3000` (or 5000) in Render, keep `LLM_SAMPLES=1`. |
 | `LLM API error 400 … model` | Model name not available — use `ministral-8b-latest` or `mistral-small-latest`. |
 | `Model returned invalid JSON` | Set `LLM_API_JSON_MODE=json_object`, or try `LLM_API_MODEL=mistral-small-latest`. |
 | First request after a while takes ~1 min | Render free instance was asleep — set up UptimeRobot (6.8). |

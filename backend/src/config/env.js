@@ -42,7 +42,7 @@ export const env = {
     key: process.env.LLM_API_KEY || process.env.MISTRAL_API_KEY,
     model: process.env.LLM_API_MODEL || 'ministral-8b-latest',
     // Free tiers allow about 1 request/second.
-    minIntervalMs: Number(process.env.LLM_API_MIN_INTERVAL_MS ?? 1100),
+    minIntervalMs: Number(process.env.LLM_API_MIN_INTERVAL_MS ?? 1500),
     jsonMode: process.env.LLM_API_JSON_MODE || 'json_schema', // or "json_object"
   },
   local: {
