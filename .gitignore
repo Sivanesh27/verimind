@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local LLM weights (GBs — GitHub rejects files > 100 MB; see docs/DEPLOYMENT.md)
+*.gguf
+*.gguf.part
+
+# Build output
+dist/
+build/
+.vercel/
+
+# Evaluation reports
+backend/reports/
+
+# Logs & OS / editor files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
